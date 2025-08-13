@@ -1167,3 +1167,89 @@ To run this, ensure you have Go installed and the `chromedp` dependency. You can
 
 ---
 
+_**User**_
+
+which browser chromedp will use if google chrome does not exist? but I have another chromium browser
+
+---
+
+_**Assistant**_
+
+`chromedp` will primarily try to find Google Chrome or Chromium in their default installation paths on your system. If Google Chrome is not found, `chromedp` will then typically look for other Chromium-based browsers that use the Chrome DevTools Protocol.
+
+However, if you have a specific Chromium-based browser (like Brave, Edge, or another custom Chromium build) that is not in a standard location, or if `chromedp` fails to find it automatically, you can explicitly tell `chromedp` which executable to use. You do this by providing options to `chromedp.NewContext` or by setting the `CDP_BINARY` environment variable.
+
+For example, to specify a custom executable path:
+
+```go
+package main
+
+import (
+	"context"
+	"log"
+	"os"
+
+	"github.com/chromedp/chromedp"
+)
+
+func main() {
+	// create context
+	// Provide the path to your Chromium browser executable
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"), // Example path for Brave on macOS
+		// Or for Linux: chromedp.ExecPath("/usr/bin/chromium"),
+		// Or for Windows: chromedp.ExecPath("C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"),
+	)
+
+	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancel()
+
+	ctx, cancel := chromedp.NewContext(allocCtx)
+	defer cancel()
+
+	// ... rest of your chromedp code ...
+	var exampleText string
+	err := chromedp.Run(ctx,
+		chromedp.Navigate(`https://www.google.com`),
+		chromedp.Text(`body`, &exampleText, chromedp.ByQuery),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Println(exampleText)
+}
+```
+
+Alternatively, you can set the `CDP_BINARY` environment variable before running your Go application:
+
+```bash
+export CDP_BINARY="/path/to/your/chromium/browser/executable"
+go run main.go
+```
+
+This way, `chromedp` will use the browser you specify.
+
+---
+
+_**User**_
+
+where to find /path/to/your/chromium/browser/executable? I have vivaldi browser in macos
+
+---
+
+_**Assistant**_
+
+For Vivaldi browser on macOS, the executable is typically located within the application bundle. You'll generally find it at a path similar to this:
+
+`/Applications/Vivaldi.app/Contents/MacOS/Vivaldi`
+
+So, if you were to use it with `chromedp.ExecPath`, it would look like this:
+
+```go
+chromedp.ExecPath("/Applications/Vivaldi.app/Contents/MacOS/Vivaldi"),
+```
+
+Remember to replace this path if your Vivaldi installation is in a non-standard location.
+
+---
+
