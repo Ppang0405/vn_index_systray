@@ -1,12 +1,15 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"io/ioutil"
-	"net/http"
+	"log"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/chromedp/chromedp"
 	"github.com/getlantern/systray"
 )
 
@@ -61,52 +64,73 @@ func onExit() {
 }
 
 func fetchAndUpdateIndex() {
-	today := time.Now().Format("2006-01-02")
-	startDate := time.Now().AddDate(0, 0, -14).Format("2006-01-02")
+	// create context
+	ctx, cancel := chromedp.NewContext(context.Background())
+	defer cancel()
 
-	url := fmt.Sprintf("https://finfo-api.vndirect.com.vn/v4/stock_prices?symbols=%s&fromDate=%s&toDate=%s", currentIndex, startDate, today)
-	resp, err := http.Get(url)
+	// run task list
+	var res string
+	err := chromedp.Run(ctx,
+		chromedp.Navigate(`https://xpower.vixs.vn/priceboard`),
+		chromedp.WaitVisible(`#charts-wrapper > div > div > div:nth-child(1) > div.chart-info > div.chart-info-detail > span`, chromedp.ByQuery),
+		chromedp.Text(`#charts-wrapper > div > div > div:nth-child(1) > div.chart-info > div.chart-info-detail > span`, &res, chromedp.ByQuery),
+	)
 	if err != nil {
+		log.Printf("Error crawling page: %v", err)
 		systray.SetTitle(fmt.Sprintf("%s: Error", currentIndex))
 		return
 	}
-	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	// Parse the extracted text
+	// Example: "1,234.56 🔺0.12 (0.01%)" or "1,234.56 🔻0.12 (0.01%)"
+	re := regexp.MustCompile(`([\d,\.]+) ([\p{Sm}\p{So}])([\d\.]+) \(([\d\.]+)%\)`)
+	matches := re.FindStringSubmatch(res)
+
+	if len(matches) < 5 {
+		log.Printf("Could not parse data: %s", res)
+		systray.SetTitle(fmt.Sprintf("%s: Parse Error", currentIndex))
+		return
+	}
+
+	valueStr := strings.ReplaceAll(matches[1], ",", "")
+	latestValue, err := strconv.ParseFloat(valueStr, 64)
 	if err != nil {
-		systray.SetTitle(fmt.Sprintf("%s: Error", currentIndex))
+		log.Printf("Error parsing latest value: %v", err)
+		systray.SetTitle(fmt.Sprintf("%s: Parse Error", currentIndex))
 		return
 	}
 
-	var result struct {
-		Data []struct {
-			Close float64 `json:"close"`
-			Open  float64 `json:"open"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		systray.SetTitle(fmt.Sprintf("%s: Error", currentIndex))
+	indicator := matches[2]
+	changeStr := matches[3]
+	changePctStr := matches[4]
+
+	change, err := strconv.ParseFloat(changeStr, 64)
+	if err != nil {
+		log.Printf("Error parsing change: %v", err)
+		systray.SetTitle(fmt.Sprintf("%s: Parse Error", currentIndex))
 		return
 	}
 
-	if len(result.Data) < 2 {
-		systray.SetTitle(fmt.Sprintf("%s: No Data", currentIndex))
+	changePct, err := strconv.ParseFloat(changePctStr, 64)
+	if err != nil {
+		log.Printf("Error parsing change percentage: %v", err)
+		systray.SetTitle(fmt.Sprintf("%s: Parse Error", currentIndex))
 		return
 	}
 
-	latestValue := result.Data[len(result.Data)-1].Close
-	prevClose := result.Data[len(result.Data)-2].Close
-	change := latestValue - prevClose
-	changePct := (change / prevClose) * 100
-
-	var indicator string
-	if change >= 0 {
-		indicator = "🔺"
-	} else {
-		indicator = "🔻"
+	// Adjust change and changePct based on indicator
+	if indicator == "🔻" {
+		change = -change
+		changePct = -changePct
 	}
 
-	systray.SetTitle(fmt.Sprintf("%s: %.2f %s%.2f%%", currentIndex, latestValue, indicator, abs(changePct)))
+	// Now update the systray title
+	finalIndicator := "🔺"
+	if change < 0 {
+		finalIndicator = "🔻"
+	}
+
+	systray.SetTitle(fmt.Sprintf("%s: %.2f %s%.2f%%", currentIndex, latestValue, finalIndicator, abs(changePct)))
 }
 
 func abs(x float64) float64 {
